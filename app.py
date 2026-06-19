@@ -1,6 +1,6 @@
 """
 🏦 MICROFINANCE LOAN DEFAULT PREDICTION SYSTEM
-Enhanced with Auto-Approval, Loan Management, Forecasting & Admin Controls
+Enhanced with Auto-Approval, Smart Loan Offers & Advanced Forecasting
 """
 
 import streamlit as st
@@ -25,7 +25,7 @@ from imblearn.over_sampling import SMOTE
 import seaborn as sns
 import matplotlib.pyplot as plt
 from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.seasonal import seasonal_decompose
+from sklearn.linear_model import LinearRegression
 
 warnings.filterwarnings('ignore')
 
@@ -190,37 +190,91 @@ def bulk_upload_borrowers(file_df):
 # ========================================
 # 7. LOAN MANAGEMENT
 # ========================================
-def calculate_loan_amount(borrower, risk_score):
-    """Calculate loan amount based on profile"""
-    income = safe_num(borrower.get("income"), is_float=True)
-    age = safe_num(borrower.get("age"))
-    repayment = safe_num(borrower.get("repayment_history"), is_float=True)
-    prev_loans = safe_num(borrower.get("previous_loans"))
-    defaults = safe_num(borrower.get("defaults"))
-    txn_freq = safe_num(borrower.get("transaction_freq"), is_float=True)
+def calculate_loan_amount(balance, txn_history_count, defaults=0, repayment_rate=80):
+    """Calculate smart loan offer based on customer profile"""
+    try:
+        # Base on account balance (3-5x multiplier)
+        balance_factor = balance * 3.5 if balance > 0 else 0
+        
+        # Transaction activity bonus (active customers get more)
+        activity_bonus = min(txn_history_count * 1000, balance * 1.5)
+        
+        # Default penalty
+        default_penalty = 1.0 if defaults == 0 else max(0.3, 1 - (defaults * 0.2))
+        
+        # Repayment history factor
+        repayment_factor = repayment_rate / 100
+        
+        base_amount = (balance_factor + activity_bonus) * repayment_factor * default_penalty
+        
+        # Minimum 5000, maximum 5x account balance
+        loan_amount = max(5000, min(base_amount, balance * 5))
+        
+        return loan_amount
+    except:
+        return 5000
 
-    base = income * 0.5
-    repayment_score = repayment / 100
-    txn_score = min(txn_freq / 50, 1)
-    experience_score = min(prev_loans / 10, 1)
-    behavior = (repayment_score * 0.5) + (txn_score * 0.3) + (experience_score * 0.2)
-    
-    default_penalty = max(0.2, 1 - (defaults * 0.25))
-    risk_penalty = max(0.1, 1 - risk_score / 100)
-    age_factor = 0.8 if age < 25 else (1.0 if age < 60 else 0.7)
-
-    amount = base * behavior * default_penalty * risk_penalty * age_factor
-    return max(10000, min(amount, income * 1.5))
-
-def get_loan_decision(risk_score, repayment, defaults):
-    """Get loan decision"""
-    if defaults > 0:
-        return "REJECT", f"Previous defaults: {defaults}"
+def get_loan_decision(risk_score, balance):
+    """Get loan decision based on risk"""
     if risk_score >= 60:
-        return "REJECT", f"High risk: {risk_score:.2f}%"
-    if risk_score >= 30:
-        return "REVIEW", f"Medium risk: {risk_score:.2f}%"
-    return "APPROVE", f"Low risk: {risk_score:.2f}%"
+        return "REJECT", f"High risk score: {risk_score:.2f}%"
+    if risk_score >= 40:
+        return "REVIEW", f"Medium risk score: {risk_score:.2f}%"
+    return "APPROVE", f"Low risk score: {risk_score:.2f}%"
+
+def calculate_repayment_schedule(loan_amount, duration_months):
+    """Calculate detailed repayment schedule"""
+    try:
+        # Simple interest calculation
+        interest_rate = 0.05  # 5% annual
+        total_interest = loan_amount * interest_rate * (duration_months / 12)
+        total_amount = loan_amount + total_interest
+        
+        # Daily, weekly, monthly, quarterly payments
+        daily_payment = total_amount / (duration_months * 30)
+        weekly_payment = daily_payment * 7
+        monthly_payment = total_amount / duration_months
+        quarterly_payment = total_amount / (duration_months / 3)
+        
+        return {
+            "total_amount": total_amount,
+            "interest": total_interest,
+            "daily": daily_payment,
+            "weekly": weekly_payment,
+            "monthly": monthly_payment,
+            "quarterly": quarterly_payment
+        }
+    except:
+        return None
+
+def predict_eligibility_timeline(risk_score, repayment_history):
+    """Predict when rejected customer becomes eligible"""
+    try:
+        if risk_score < 60:
+            return None  # Already eligible
+        
+        # Estimate months to become eligible (reduce risk to 60%)
+        reduction_needed = risk_score - 60
+        months_to_eligible = int(np.ceil(reduction_needed / 10))  # 10% reduction per month with good behavior
+        
+        eligible_date = datetime.now() + timedelta(days=months_to_eligible * 30)
+        
+        # Suggest max loan at that time
+        suggested_loan = 15000 * (repayment_history / 100) if repayment_history > 0 else 10000
+        
+        return {
+            "months_to_eligible": months_to_eligible,
+            "eligible_date": eligible_date,
+            "suggested_loan_amount": suggested_loan,
+            "required_improvements": [
+                "Make all payments on time",
+                "Increase transaction frequency",
+                "Maintain consistent income",
+                "Avoid any defaults"
+            ]
+        }
+    except:
+        return None
 
 def create_loan(bid, amount, duration, risk, model, decision, reason, borrowed_amount=0):
     """Create loan record"""
@@ -391,11 +445,9 @@ def auto_process_loan_applications():
         
         for app in pending_apps:
             try:
-                # Get customer details (from borrowers or create default profile)
                 borrower_data = db['borrowers'].find_one({"name": app.get("username")})
                 
                 if not borrower_data:
-                    # Use application data to build profile
                     income = app.get("income", 50000)
                     age = app.get("age", 30)
                     repayment = app.get("repayment_history", 80)
@@ -410,7 +462,6 @@ def auto_process_loan_applications():
                     defaults = borrower_data.get("defaults", 0)
                     txn_freq = borrower_data.get("transaction_freq", 5)
                 
-                # Use best model for prediction
                 models = st.session_state.models
                 best_model_name = max(models.items(), key=lambda x: x[1]["AUC"])[0]
                 best_model_info = models[best_model_name]
@@ -423,9 +474,8 @@ def auto_process_loan_applications():
                     best_model_name
                 )
                 
-                decision, reason = get_loan_decision(risk, repayment, defaults)
+                decision, reason = get_loan_decision(risk, app.get("offered_amount", 0))
                 
-                # Update application with decision
                 db['loan_applications'].update_one(
                     {"_id": app["_id"]},
                     {
@@ -455,7 +505,6 @@ def generate_eda_charts(df):
     charts = {}
     
     try:
-        # Scatter plots
         fig_scatter = px.scatter(df, x="income", y="defaults", 
                                  color="repayment_history", size="age",
                                  title="Income vs Defaults (colored by Repayment %)",
@@ -476,7 +525,6 @@ def generate_eda_charts(df):
         pass
     
     try:
-        # Distribution plots
         fig_dist_income = px.histogram(df, x="income", nbins=30, 
                                        title="Income Distribution",
                                        labels={"income": "Annual Income ($)"},
@@ -507,7 +555,6 @@ def generate_eda_charts(df):
         pass
     
     try:
-        # Correlation heatmap
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         corr_matrix = df[numeric_cols].corr()
         
@@ -524,7 +571,6 @@ def generate_eda_charts(df):
         pass
     
     try:
-        # Box plots
         fig_box = px.box(df, y=["income", "repayment_history", "transaction_freq"],
                          title="Statistical Distribution of Key Features",
                          labels={"variable": "Feature", "value": "Value"})
@@ -536,76 +582,197 @@ def generate_eda_charts(df):
     return charts
 
 # ========================================
-# 10. FORECASTING FUNCTIONS
+# 10. ROBUST FORECASTING FUNCTIONS
 # ========================================
 def forecast_loan_amounts(loans_df, periods=30):
-    """Forecast average loan amounts"""
+    """Forecast average loan amounts - Works with minimal data"""
     try:
-        if len(loans_df) < 10:
+        if len(loans_df) == 0:
             return None
         
+        loans_df = loans_df.copy()
+        loans_df['created_at'] = pd.to_datetime(loans_df['created_at'])
         loans_df = loans_df.sort_values('created_at')
+        
+        # If we have at least one record, use simple forecasting
+        if len(loans_df) == 1:
+            avg_amount = loans_df['amount'].mean()
+            dates = pd.date_range(datetime.now(), periods=periods, freq='D')
+            forecast_values = [avg_amount] * periods
+            
+            forecast_df = pd.DataFrame({
+                'forecast': forecast_values
+            }, index=dates)
+            
+            historical_df = pd.DataFrame({
+                'amount': [avg_amount]
+            }, index=[loans_df['created_at'].iloc[0]])
+            
+            return forecast_df, historical_df['amount'], None
+        
+        # Group by day and get average
         loans_df.set_index('created_at', inplace=True)
-        daily_avg = loans_df['amount'].resample('D').mean().dropna()
+        daily_avg = loans_df['amount'].resample('D').mean().fillna(method='ffill')
         
-        if len(daily_avg) < 7:
-            return None
+        if len(daily_avg) < 2:
+            daily_avg = daily_avg.reindex(pd.date_range(daily_avg.index[0], periods=max(2, len(daily_avg)), freq='D'), method='ffill')
         
-        model = ARIMA(daily_avg, order=(1, 1, 1))
-        fitted = model.fit()
-        forecast = fitted.get_forecast(steps=periods)
-        forecast_df = forecast.conf_int().copy()
-        forecast_df['forecast'] = forecast.predicted_mean
+        try:
+            # Try ARIMA if we have enough points
+            if len(daily_avg) >= 4:
+                model = ARIMA(daily_avg, order=(1, 0, 0), suppress_warnings=True)
+                fitted = model.fit()
+                forecast = fitted.get_forecast(steps=periods, alpha=0.05)
+                forecast_df = forecast.conf_int(alpha=0.05).copy()
+                forecast_df.columns = ['lower', 'upper']
+                forecast_df['forecast'] = forecast.predicted_mean
+            else:
+                raise Exception("Not enough data for ARIMA")
+        except:
+            # Fallback to linear regression
+            X = np.arange(len(daily_avg)).reshape(-1, 1)
+            y = daily_avg.values
+            model = LinearRegression()
+            model.fit(X, y)
+            
+            future_X = np.arange(len(daily_avg), len(daily_avg) + periods).reshape(-1, 1)
+            forecast_values = model.predict(future_X)
+            
+            dates = pd.date_range(daily_avg.index[-1] + timedelta(days=1), periods=periods, freq='D')
+            forecast_df = pd.DataFrame({
+                'forecast': forecast_values,
+                'lower': forecast_values * 0.9,
+                'upper': forecast_values * 1.1
+            }, index=dates)
         
-        return forecast_df, daily_avg, fitted
-    except:
+        return forecast_df, daily_avg, model
+    except Exception as e:
+        st.warning(f"Forecasting error: {str(e)}")
         return None
 
 def forecast_default_risk(loans_df, periods=30):
     """Forecast default risk trends"""
     try:
-        if len(loans_df) < 10:
+        if len(loans_df) == 0:
             return None
         
+        loans_df = loans_df.copy()
+        loans_df['created_at'] = pd.to_datetime(loans_df['created_at'])
         loans_df = loans_df.sort_values('created_at')
+        
+        if len(loans_df) == 1:
+            avg_risk = loans_df['risk_score'].mean()
+            dates = pd.date_range(datetime.now(), periods=periods, freq='D')
+            forecast_values = [avg_risk] * periods
+            
+            forecast_df = pd.DataFrame({
+                'forecast': forecast_values
+            }, index=dates)
+            
+            historical_df = pd.DataFrame({
+                'risk_score': [avg_risk]
+            }, index=[loans_df['created_at'].iloc[0]])
+            
+            return forecast_df, historical_df['risk_score'], None
+        
         loans_df.set_index('created_at', inplace=True)
-        daily_risk = loans_df['risk_score'].resample('D').mean().dropna()
+        daily_risk = loans_df['risk_score'].resample('D').mean().fillna(method='ffill')
         
-        if len(daily_risk) < 7:
-            return None
+        if len(daily_risk) < 2:
+            daily_risk = daily_risk.reindex(pd.date_range(daily_risk.index[0], periods=max(2, len(daily_risk)), freq='D'), method='ffill')
         
-        model = ARIMA(daily_risk, order=(1, 1, 1))
-        fitted = model.fit()
-        forecast = fitted.get_forecast(steps=periods)
-        forecast_df = forecast.conf_int().copy()
-        forecast_df['forecast'] = forecast.predicted_mean
+        try:
+            if len(daily_risk) >= 4:
+                model = ARIMA(daily_risk, order=(1, 0, 0), suppress_warnings=True)
+                fitted = model.fit()
+                forecast = fitted.get_forecast(steps=periods, alpha=0.05)
+                forecast_df = forecast.conf_int(alpha=0.05).copy()
+                forecast_df.columns = ['lower', 'upper']
+                forecast_df['forecast'] = forecast.predicted_mean
+            else:
+                raise Exception("Not enough data")
+        except:
+            X = np.arange(len(daily_risk)).reshape(-1, 1)
+            y = daily_risk.values
+            model = LinearRegression()
+            model.fit(X, y)
+            
+            future_X = np.arange(len(daily_risk), len(daily_risk) + periods).reshape(-1, 1)
+            forecast_values = model.predict(future_X)
+            
+            dates = pd.date_range(daily_risk.index[-1] + timedelta(days=1), periods=periods, freq='D')
+            forecast_df = pd.DataFrame({
+                'forecast': forecast_values,
+                'lower': forecast_values * 0.9,
+                'upper': forecast_values * 1.1
+            }, index=dates)
         
-        return forecast_df, daily_risk, fitted
-    except:
+        return forecast_df, daily_risk, model
+    except Exception as e:
+        st.warning(f"Risk forecasting error: {str(e)}")
         return None
 
 def forecast_approval_rate(loans_df, periods=30):
     """Forecast approval rate"""
     try:
-        if len(loans_df) < 10:
+        if len(loans_df) == 0:
             return None
         
+        loans_df = loans_df.copy()
+        loans_df['created_at'] = pd.to_datetime(loans_df['created_at'])
         loans_df = loans_df.sort_values('created_at')
-        loans_df.set_index('created_at', inplace=True)
         loans_df['approved'] = (loans_df['status'] == 'approved').astype(int)
-        daily_approval = loans_df['approved'].resample('D').mean().dropna()
         
-        if len(daily_approval) < 7:
-            return None
+        if len(loans_df) == 1:
+            approval_rate = loans_df['approved'].mean() * 100
+            dates = pd.date_range(datetime.now(), periods=periods, freq='D')
+            forecast_values = [approval_rate] * periods
+            
+            forecast_df = pd.DataFrame({
+                'forecast': forecast_values
+            }, index=dates)
+            
+            historical_df = pd.DataFrame({
+                'approval_rate': [approval_rate]
+            }, index=[loans_df['created_at'].iloc[0]])
+            
+            return forecast_df, historical_df['approval_rate'], None
         
-        model = ARIMA(daily_approval, order=(1, 1, 0))
-        fitted = model.fit()
-        forecast = fitted.get_forecast(steps=periods)
-        forecast_df = forecast.conf_int().copy()
-        forecast_df['forecast'] = forecast.predicted_mean * 100
+        loans_df.set_index('created_at', inplace=True)
+        daily_approval = loans_df['approved'].resample('D').mean().fillna(method='ffill') * 100
         
-        return forecast_df, daily_approval * 100, fitted
-    except:
+        if len(daily_approval) < 2:
+            daily_approval = daily_approval.reindex(pd.date_range(daily_approval.index[0], periods=max(2, len(daily_approval)), freq='D'), method='ffill')
+        
+        try:
+            if len(daily_approval) >= 4:
+                model = ARIMA(daily_approval, order=(1, 0, 0), suppress_warnings=True)
+                fitted = model.fit()
+                forecast = fitted.get_forecast(steps=periods, alpha=0.05)
+                forecast_df = forecast.conf_int(alpha=0.05).copy()
+                forecast_df.columns = ['lower', 'upper']
+                forecast_df['forecast'] = forecast.predicted_mean
+            else:
+                raise Exception("Not enough data")
+        except:
+            X = np.arange(len(daily_approval)).reshape(-1, 1)
+            y = daily_approval.values
+            model = LinearRegression()
+            model.fit(X, y)
+            
+            future_X = np.arange(len(daily_approval), len(daily_approval) + periods).reshape(-1, 1)
+            forecast_values = model.predict(future_X)
+            
+            dates = pd.date_range(daily_approval.index[-1] + timedelta(days=1), periods=periods, freq='D')
+            forecast_df = pd.DataFrame({
+                'forecast': forecast_values,
+                'lower': np.maximum(forecast_values * 0.9, 0),
+                'upper': np.minimum(forecast_values * 1.1, 100)
+            }, index=dates)
+        
+        return forecast_df, daily_approval, model
+    except Exception as e:
+        st.warning(f"Approval rate forecasting error: {str(e)}")
         return None
 
 # ========================================
@@ -634,6 +801,18 @@ def get_account_balance(user_id):
     try:
         account = db['accounts'].find_one({"user_id": ObjectId(user_id)})
         return account.get("balance", 0) if account else 0
+    except:
+        return 0
+
+def get_transaction_count(user_id, days=30):
+    """Get transaction count for last N days"""
+    try:
+        cutoff_date = datetime.now() - timedelta(days=days)
+        count = db['transactions'].count_documents({
+            "user_id": user_id,
+            "timestamp": {"$gte": cutoff_date}
+        })
+        return count
     except:
         return 0
 
@@ -713,7 +892,6 @@ def transfer_money(user_id, recipient_username, amount):
         if not recipient_account:
             return "recipient_no_account"
         
-        # Deduct from sender
         db['accounts'].update_one(
             {"user_id": ObjectId(user_id)},
             {
@@ -722,7 +900,6 @@ def transfer_money(user_id, recipient_username, amount):
             }
         )
         
-        # Add to recipient
         db['accounts'].update_one(
             {"user_id": recipient["_id"]},
             {
@@ -731,7 +908,6 @@ def transfer_money(user_id, recipient_username, amount):
             }
         )
         
-        # Record transactions
         db['transactions'].insert_one({
             "user_id": user_id,
             "type": "transfer_out",
@@ -785,23 +961,18 @@ def recharge_card(user_id, amount, card_number):
     except:
         return "error"
 
-def apply_for_loan_user(user_id, username, amount, duration, age=30, income=50000, repayment_history=80, previous_loans=0, defaults=0, transaction_freq=5):
-    """User applies for loan"""
+def apply_for_loan_user(user_id, username, offered_amount):
+    """User applies for loan with system-calculated offer"""
     try:
         db['loan_applications'].insert_one({
             "user_id": user_id,
             "username": username,
-            "amount": amount,
-            "duration": duration,
-            "age": age,
-            "income": income,
-            "repayment_history": repayment_history,
-            "previous_loans": previous_loans,
-            "defaults": defaults,
-            "transaction_freq": transaction_freq,
+            "offered_amount": offered_amount,
+            "accepted_amount": 0,
+            "duration": 12,
             "status": "pending",
             "created_at": datetime.now(),
-            "decision_reason": "Waiting for processing"
+            "decision_reason": "Waiting for model processing"
         })
         return True
     except:
@@ -812,37 +983,51 @@ def get_user_loan_status(user_id):
     try:
         app = db['loan_applications'].find_one({"user_id": user_id}, sort=[("created_at", -1)])
         if app:
+            schedule = None
             days_left = None
-            daily_payment = None
-            weekly_payment = None
-            monthly_payment = None
             
-            if app.get("status") == "approved" and app.get("amount"):
+            if app.get("status") == "approved" and app.get("accepted_amount"):
+                schedule = calculate_repayment_schedule(app["accepted_amount"], app.get("duration", 12))
                 if app.get("created_at"):
-                    end_date = app["created_at"] + timedelta(days=app.get("duration", 30))
-                    days_left = (end_date - datetime.now()).days
-                    
-                    if days_left > 0:
-                        total_amount = app.get("amount", 0)
-                        daily_payment = total_amount / days_left
-                        weekly_payment = daily_payment * 7
-                        monthly_payment = daily_payment * 30
+                    end_date = app["created_at"] + timedelta(days=app.get("duration", 12) * 30)
+                    days_left = max(0, (end_date - datetime.now()).days)
             
             return {
                 "status": app.get("status"),
-                "amount": app.get("amount"),
+                "offered_amount": app.get("offered_amount"),
+                "accepted_amount": app.get("accepted_amount"),
                 "duration": app.get("duration"),
                 "reason": app.get("decision_reason"),
                 "created_at": app.get("created_at"),
                 "days_left": days_left,
-                "daily_payment": daily_payment,
-                "weekly_payment": weekly_payment,
-                "monthly_payment": monthly_payment,
-                "borrowed_amount": app.get("borrowed_amount", 0)
+                "schedule": schedule,
+                "risk_score": app.get("risk_score"),
+                "id": str(app["_id"])
             }
         return None
     except:
         return None
+
+def accept_loan_offer(user_id, amount, duration):
+    """Accept loan offer and trigger ML evaluation"""
+    try:
+        app = db['loan_applications'].find_one({"user_id": user_id}, sort=[("created_at", -1)])
+        if not app:
+            return False
+        
+        db['loan_applications'].update_one(
+            {"_id": app["_id"]},
+            {
+                "$set": {
+                    "accepted_amount": amount,
+                    "duration": duration,
+                    "offer_accepted_at": datetime.now()
+                }
+            }
+        )
+        return True
+    except:
+        return False
 
 def withdraw_loan_money(user_id, amount):
     """Withdraw approved loan money to account"""
@@ -851,10 +1036,9 @@ def withdraw_loan_money(user_id, amount):
         if not app:
             return "not_approved"
         
-        if app.get("borrowed_amount", 0) + amount > app.get("amount", 0):
+        if app.get("borrowed_amount", 0) + amount > app.get("accepted_amount", 0):
             return "exceeds_limit"
         
-        # Add to account
         db['accounts'].update_one(
             {"user_id": ObjectId(user_id)},
             {
@@ -863,13 +1047,11 @@ def withdraw_loan_money(user_id, amount):
             }
         )
         
-        # Update borrowed amount
         db['loan_applications'].update_one(
             {"_id": app["_id"]},
             {"$inc": {"borrowed_amount": amount}}
         )
         
-        # Record transaction
         db['transactions'].insert_one({
             "user_id": user_id,
             "type": "loan_withdrawal",
@@ -929,11 +1111,8 @@ def approve_user(user_id):
 def delete_user(user_id):
     """Delete user permanently"""
     try:
-        # Delete user
         db['users'].delete_one({"_id": ObjectId(user_id)})
-        # Delete associated account
         db['accounts'].delete_one({"user_id": ObjectId(user_id)})
-        # Delete transactions
         db['transactions'].delete_many({"user_id": user_id})
         return True
     except:
@@ -1205,36 +1384,48 @@ if user['role'] == 'customer':
         st.title("📊 Apply for Loan")
         st.divider()
         
-        st.markdown("### Loan Application Form")
+        balance = get_account_balance(user['_id'])
+        txn_count = get_transaction_count(user['_id'], days=30)
+        
+        st.markdown("### 🤖 Smart Loan Offer Calculation")
+        st.info(f"""
+        **Your Profile:**
+        - Current Balance: ${balance:,.2f}
+        - Transactions (Last 30 days): {txn_count}
+        """)
+        
+        # Calculate smart loan offer
+        offered_amount = calculate_loan_amount(balance, txn_count, defaults=0, repayment_rate=80)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("💰 Offered Loan Amount", f"${offered_amount:,.2f}")
+        with col2:
+            st.metric("📈 Max Multiplier", "5x Account Balance")
+        with col3:
+            st.metric("📊 Activity Bonus", f"${min(txn_count * 1000, balance * 1.5):,.2f}")
+        
+        st.divider()
+        st.markdown("### Accept Offer")
         
         col1, col2 = st.columns(2)
         with col1:
-            loan_amount = st.number_input("Loan Amount ($)", min_value=1000, step=1000)
-            age = st.number_input("Age", min_value=18, max_value=100, value=30)
-            income = st.number_input("Annual Income ($)", min_value=1000, step=1000, value=50000)
+            accepted_amount = st.number_input(
+                "Loan Amount You Want", 
+                min_value=1000, 
+                max_value=int(offered_amount),
+                value=int(offered_amount),
+                step=1000
+            )
         with col2:
             duration = st.selectbox("Loan Duration (months)", [6, 12, 18, 24, 36])
-            repayment_history = st.slider("Repayment History (%)", 0, 100, 80)
-            previous_loans = st.number_input("Previous Loans", min_value=0, value=0)
         
-        defaults = st.slider("Defaults", 0, 5, 0)
-        transaction_freq = st.number_input("Transaction Frequency (times/month)", min_value=1, value=5)
-        
-        if st.button("✅ Submit Application", use_container_width=True, type="primary"):
-            if apply_for_loan_user(
-                user['_id'], 
-                user['username'], 
-                loan_amount, 
-                duration,
-                age=age,
-                income=income,
-                repayment_history=repayment_history,
-                previous_loans=previous_loans,
-                defaults=defaults,
-                transaction_freq=transaction_freq
-            ):
-                st.success("✅ Loan application submitted successfully!")
-                st.info("Your application is under review. Check your Loan Status for updates.")
+        if st.button("✅ Apply for Loan", use_container_width=True, type="primary"):
+            if apply_for_loan_user(user['_id'], user['username'], offered_amount):
+                accept_loan_offer(user['_id'], accepted_amount, duration)
+                st.success("✅ Loan application submitted!")
+                st.info("⏳ Processing your application with AI model...")
+                st.balloons()
                 st.rerun()
             else:
                 st.error("❌ Failed to submit application")
@@ -1252,33 +1443,57 @@ if user['role'] == 'customer':
             with col1:
                 st.metric("Status", f"{status_emoji} {loan_status['status'].upper()}")
             with col2:
-                st.metric("Loan Amount", f"${loan_status['amount']:,.2f}")
+                st.metric("Offered Amount", f"${loan_status['offered_amount']:,.2f}")
             with col3:
                 st.metric("Duration", f"{loan_status['duration']} months")
             with col4:
-                st.metric("Applied Date", loan_status['created_at'].strftime("%Y-%m-%d") if loan_status['created_at'] else "N/A")
+                st.metric("Risk Score", f"{loan_status.get('risk_score', 'N/A')}")
             
             st.divider()
             st.markdown("### Decision Details")
             st.info(f"**Reason:** {loan_status['reason']}")
             
-            if loan_status['status'] == 'approved':
+            # If rejected, show eligibility timeline
+            if loan_status['status'] == 'rejected':
+                st.divider()
+                st.markdown("### ⏰ Path to Loan Eligibility")
+                
+                eligibility = predict_eligibility_timeline(loan_status.get('risk_score', 50), 80)
+                if eligibility:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Eligible In", f"{eligibility['months_to_eligible']} months")
+                        st.metric("Eligible Date", eligibility['eligible_date'].strftime("%Y-%m-%d"))
+                    with col2:
+                        st.metric("Suggested Loan Amount", f"${eligibility['suggested_loan_amount']:,.2f}")
+                    
+                    st.divider()
+                    st.markdown("### 📋 How to Improve Your Application:")
+                    for i, improvement in enumerate(eligibility['required_improvements'], 1):
+                        st.write(f"{i}. ✅ {improvement}")
+            
+            # If approved, show repayment schedule
+            if loan_status['status'] == 'approved' and loan_status['schedule']:
                 st.divider()
                 st.markdown("### 📅 Repayment Schedule")
                 
+                schedule = loan_status['schedule']
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    if loan_status['days_left']:
-                        st.metric("Days Left", f"{max(0, loan_status['days_left'])} days")
+                    st.metric("Days Left to Pay", f"{loan_status['days_left']} days")
                 with col2:
-                    if loan_status['daily_payment']:
-                        st.metric("Daily Payment", f"${loan_status['daily_payment']:.2f}")
+                    st.metric("Daily Payment", f"${schedule['daily']:.2f}")
                 with col3:
-                    if loan_status['weekly_payment']:
-                        st.metric("Weekly Payment", f"${loan_status['weekly_payment']:.2f}")
+                    st.metric("Weekly Payment", f"${schedule['weekly']:.2f}")
                 with col4:
-                    if loan_status['monthly_payment']:
-                        st.metric("Monthly Payment", f"${loan_status['monthly_payment']:.2f}")
+                    st.metric("Monthly Payment", f"${schedule['monthly']:.2f}")
+                
+                st.divider()
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Quarterly Payment", f"${schedule['quarterly']:.2f}")
+                with col2:
+                    st.metric("Total to Pay Back", f"${schedule['total_amount']:,.2f}")
         else:
             st.warning("❌ No loan applications found")
     
@@ -1293,8 +1508,8 @@ if user['role'] == 'customer':
         elif loan_status['status'] != 'approved':
             st.error(f"❌ Loan not approved. Current status: {loan_status['status'].upper()}")
         else:
-            available = loan_status['amount'] - loan_status['borrowed_amount']
-            st.info(f"💰 Approved Amount: ${loan_status['amount']:,.2f}\n\n💵 Already Borrowed: ${loan_status['borrowed_amount']:,.2f}\n\n✅ Available to Withdraw: ${available:,.2f}")
+            available = loan_status['accepted_amount'] - loan_status.get('borrowed_amount', 0)
+            st.info(f"💰 Approved Amount: ${loan_status['accepted_amount']:,.2f}\n\n💵 Already Borrowed: ${loan_status.get('borrowed_amount', 0):,.2f}\n\n✅ Available to Withdraw: ${available:,.2f}")
             
             amount = st.number_input("Amount to Withdraw ($)", min_value=1, max_value=int(available) if available > 0 else 1, step=100)
             
@@ -1645,41 +1860,39 @@ else:
         
         loans = get_loans()
         
-        if len(loans) < 10:
-            st.warning(f"Need 10+ loans for forecasting. Current: {len(loans)}")
-        else:
-            forecast_periods = st.slider("Forecast Periods (days)", 7, 90, 30)
+        forecast_periods = st.slider("Forecast Periods (days)", 7, 90, 30)
+        
+        st.markdown("### 💰 Average Loan Amount Forecast")
+        forecast_amount = forecast_loan_amounts(loans, periods=forecast_periods)
+        
+        if forecast_amount:
+            forecast_df, historical, model = forecast_amount
             
-            st.markdown("### 💰 Average Loan Amount Forecast")
-            forecast_amount = forecast_loan_amounts(loans, periods=forecast_periods)
+            fig_amount = go.Figure()
             
-            if forecast_amount:
-                forecast_df, historical, model = forecast_amount
-                
-                fig_amount = go.Figure()
-                
-                # Historical data
-                fig_amount.add_trace(go.Scatter(
-                    x=historical.index,
-                    y=historical.values,
-                    mode='lines',
-                    name='Historical Average',
-                    line=dict(color='#3498db', width=2)
-                ))
-                
-                # Forecast
+            # Historical data
+            fig_amount.add_trace(go.Scatter(
+                x=historical.index,
+                y=historical.values,
+                mode='lines',
+                name='Historical Average',
+                line=dict(color='#3498db', width=2)
+            ))
+            
+            # Forecast
+            fig_amount.add_trace(go.Scatter(
+                x=forecast_df.index,
+                y=forecast_df['forecast'],
+                mode='lines+markers',
+                name='Forecast',
+                line=dict(color='#2ecc71', width=2, dash='dash')
+            ))
+            
+            # Confidence interval if available
+            if 'lower' in forecast_df.columns and 'upper' in forecast_df.columns:
                 fig_amount.add_trace(go.Scatter(
                     x=forecast_df.index,
-                    y=forecast_df['forecast'],
-                    mode='lines+markers',
-                    name='Forecast',
-                    line=dict(color='#2ecc71', width=2, dash='dash')
-                ))
-                
-                # Confidence interval
-                fig_amount.add_trace(go.Scatter(
-                    x=forecast_df.index,
-                    y=forecast_df.iloc[:, 0],
+                    y=forecast_df['upper'],
                     fill=None,
                     mode='lines',
                     line_color='rgba(0,0,0,0)',
@@ -1688,98 +1901,142 @@ else:
                 
                 fig_amount.add_trace(go.Scatter(
                     x=forecast_df.index,
-                    y=forecast_df.iloc[:, 1],
+                    y=forecast_df['lower'],
                     fill='tonexty',
                     mode='lines',
                     line_color='rgba(0,0,0,0)',
                     name='95% Confidence Interval',
                     fillcolor='rgba(46,204,113,0.2)'
                 ))
-                
-                fig_amount.update_layout(
-                    title='Average Loan Amount Forecast',
-                    xaxis_title='Date',
-                    yaxis_title='Amount ($)',
-                    template='plotly_dark',
-                    hovermode='x unified'
-                )
-                st.plotly_chart(fig_amount, use_container_width=True)
-            else:
-                st.warning("Insufficient data for forecasting")
             
-            st.divider()
+            fig_amount.update_layout(
+                title='Average Loan Amount Forecast',
+                xaxis_title='Date',
+                yaxis_title='Amount ($)',
+                template='plotly_dark',
+                hovermode='x unified'
+            )
+            st.plotly_chart(fig_amount, use_container_width=True)
+            st.success(f"✅ Forecasted {len(forecast_df)} days of data")
+        else:
+            st.info("Add some loans to see forecasting")
+        
+        st.divider()
+        
+        st.markdown("### ⚠️ Default Risk Forecast")
+        forecast_risk = forecast_default_risk(loans, periods=forecast_periods)
+        
+        if forecast_risk:
+            forecast_df, historical, model = forecast_risk
             
-            st.markdown("### ⚠️ Default Risk Forecast")
-            forecast_risk = forecast_default_risk(loans, periods=forecast_periods)
+            fig_risk = go.Figure()
             
-            if forecast_risk:
-                forecast_df, historical, model = forecast_risk
-                
-                fig_risk = go.Figure()
-                
+            fig_risk.add_trace(go.Scatter(
+                x=historical.index,
+                y=historical.values,
+                mode='lines',
+                name='Historical Risk',
+                line=dict(color='#e74c3c', width=2)
+            ))
+            
+            fig_risk.add_trace(go.Scatter(
+                x=forecast_df.index,
+                y=forecast_df['forecast'],
+                mode='lines+markers',
+                name='Risk Forecast',
+                line=dict(color='#f39c12', width=2, dash='dash')
+            ))
+            
+            if 'lower' in forecast_df.columns and 'upper' in forecast_df.columns:
                 fig_risk.add_trace(go.Scatter(
-                    x=historical.index,
-                    y=historical.values,
+                    x=forecast_df.index,
+                    y=forecast_df['upper'],
+                    fill=None,
                     mode='lines',
-                    name='Historical Risk',
-                    line=dict(color='#e74c3c', width=2)
+                    line_color='rgba(0,0,0,0)',
+                    showlegend=False
                 ))
                 
                 fig_risk.add_trace(go.Scatter(
                     x=forecast_df.index,
-                    y=forecast_df['forecast'],
-                    mode='lines+markers',
-                    name='Risk Forecast',
-                    line=dict(color='#f39c12', width=2, dash='dash')
-                ))
-                
-                fig_risk.update_layout(
-                    title='Default Risk Score Forecast',
-                    xaxis_title='Date',
-                    yaxis_title='Risk Score (%)',
-                    template='plotly_dark',
-                    hovermode='x unified'
-                )
-                st.plotly_chart(fig_risk, use_container_width=True)
-            else:
-                st.warning("Insufficient data for risk forecasting")
-            
-            st.divider()
-            
-            st.markdown("### ✅ Approval Rate Forecast")
-            forecast_approval = forecast_approval_rate(loans, periods=forecast_periods)
-            
-            if forecast_approval:
-                forecast_df, historical, model = forecast_approval
-                
-                fig_approval = go.Figure()
-                
-                fig_approval.add_trace(go.Scatter(
-                    x=historical.index,
-                    y=historical.values,
+                    y=forecast_df['lower'],
+                    fill='tonexty',
                     mode='lines',
-                    name='Historical Approval Rate',
-                    line=dict(color='#2ecc71', width=2)
+                    line_color='rgba(0,0,0,0)',
+                    name='95% Confidence Interval',
+                    fillcolor='rgba(243,156,18,0.2)'
+                ))
+            
+            fig_risk.update_layout(
+                title='Default Risk Score Forecast',
+                xaxis_title='Date',
+                yaxis_title='Risk Score (%)',
+                template='plotly_dark',
+                hovermode='x unified'
+            )
+            st.plotly_chart(fig_risk, use_container_width=True)
+            st.success(f"✅ Forecasted {len(forecast_df)} days of risk data")
+        else:
+            st.info("Add some loans to see risk forecasting")
+        
+        st.divider()
+        
+        st.markdown("### ✅ Approval Rate Forecast")
+        forecast_approval = forecast_approval_rate(loans, periods=forecast_periods)
+        
+        if forecast_approval:
+            forecast_df, historical, model = forecast_approval
+            
+            fig_approval = go.Figure()
+            
+            fig_approval.add_trace(go.Scatter(
+                x=historical.index,
+                y=historical.values,
+                mode='lines',
+                name='Historical Approval Rate',
+                line=dict(color='#2ecc71', width=2)
+            ))
+            
+            fig_approval.add_trace(go.Scatter(
+                x=forecast_df.index,
+                y=forecast_df['forecast'],
+                mode='lines+markers',
+                name='Approval Rate Forecast',
+                line=dict(color='#9b59b6', width=2, dash='dash')
+            ))
+            
+            if 'lower' in forecast_df.columns and 'upper' in forecast_df.columns:
+                fig_approval.add_trace(go.Scatter(
+                    x=forecast_df.index,
+                    y=forecast_df['upper'],
+                    fill=None,
+                    mode='lines',
+                    line_color='rgba(0,0,0,0)',
+                    showlegend=False
                 ))
                 
                 fig_approval.add_trace(go.Scatter(
                     x=forecast_df.index,
-                    y=forecast_df['forecast'],
-                    mode='lines+markers',
-                    name='Approval Rate Forecast',
-                    line=dict(color='#9b59b6', width=2, dash='dash')
+                    y=forecast_df['lower'],
+                    fill='tonexty',
+                    mode='lines',
+                    line_color='rgba(0,0,0,0)',
+                    name='95% Confidence Interval',
+                    fillcolor='rgba(155,89,182,0.2)'
                 ))
-                
-                fig_approval.update_layout(
-                    title='Loan Approval Rate Forecast',
-                    xaxis_title='Date',
-                    yaxis_title='Approval Rate (%)',
-                    template='plotly_dark',
-                    hovermode='x unified'
-                )
-                st.plotly_chart(fig_approval, use_container_width=True)
-            else:
-                st.warning("Insufficient data for approval rate forecasting")
+            
+            fig_approval.update_layout(
+                title='Loan Approval Rate Forecast',
+                xaxis_title='Date',
+                yaxis_title='Approval Rate (%)',
+                template='plotly_dark',
+                hovermode='x unified',
+                yaxis=dict(range=[0, 100])
+            )
+            st.plotly_chart(fig_approval, use_container_width=True)
+            st.success(f"✅ Forecasted {len(forecast_df)} days of approval data")
+        else:
+            st.info("Add some loans to see approval rate forecasting")
 
     # LOAN PROCESSING
     elif page == "Loan Processing":
@@ -1837,12 +2094,11 @@ else:
                     
                     decision, reason = get_loan_decision(
                         risk,
-                        safe_num(borrower['repayment_history'], is_float=True),
-                        safe_num(borrower['defaults'])
+                        safe_num(borrower['repayment_history'], is_float=True)
                     )
                     
                     if decision == "APPROVE":
-                        amount = calculate_loan_amount(borrower, risk)
+                        amount = calculate_loan_amount(borrower['income'], borrower['transaction_freq'])
                         duration = 12 if amount < borrower['income'] else 18
                     else:
                         amount = 0
@@ -1907,7 +2163,6 @@ else:
         apps = get_all_loan_applications()
         
         if len(apps) > 0:
-            # Summary
             approved = len(apps[apps['status'] == 'approved'])
             rejected = len(apps[apps['status'] == 'rejected'])
             pending = len(apps[apps['status'] == 'pending'])
@@ -1924,14 +2179,12 @@ else:
             
             st.divider()
             
-            # Display applications
             st.markdown("### All Applications")
-            apps_display = apps[['username', 'amount', 'duration', 'status', 'decision_reason', 'created_at']].copy()
+            apps_display = apps[['username', 'offered_amount', 'accepted_amount', 'duration', 'status', 'decision_reason', 'created_at']].copy()
             st.dataframe(apps_display, use_container_width=True)
             
             st.divider()
             
-            # Manual approval/rejection
             st.markdown("### Manage Applications")
             selected_app = st.selectbox(
                 "Select Application",
@@ -1944,9 +2197,9 @@ else:
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Requested Amount", f"${app_data['amount']:,.2f}")
+                    st.metric("Offered Amount", f"${app_data['offered_amount']:,.2f}")
                 with col2:
-                    st.metric("Duration", f"{app_data['duration']} months")
+                    st.metric("Accepted Amount", f"${app_data.get('accepted_amount', 0):,.2f}")
                 with col3:
                     st.metric("Current Status", app_data['status'].upper())
                 
@@ -1979,7 +2232,7 @@ else:
                 users = get_all_users()
                 
                 if len(users) > 0:
-                    st.dataframe(users[['username', 'role', 'status', 'created_at']], use_container_width=True)
+                    st.dataframe(users[['username', 'password', 'role', 'status', 'created_at']], use_container_width=True)
                     
                     st.divider()
                     st.markdown("### Delete Users")
@@ -2049,12 +2302,18 @@ else:
                 st.markdown("### System Configuration")
                 st.info("""
                 **Risk Assessment Thresholds:**
-                - Low Risk: 0-30%
-                - Medium Risk: 30-60%
+                - Low Risk: 0-40%
+                - Medium Risk: 40-60%
                 - High Risk: 60%+
+                
+                **Loan Calculation:**
+                - Base: 3-5x Account Balance
+                - Activity Bonus: Transaction Frequency × $1000
+                - Minimum: $5,000
+                - Maximum: 5x Account Balance
                 
                 **System Requirements:**
                 - Minimum borrowers for training: 20
-                - Minimum loans for forecasting: 10
+                - Forecasting: Works with 1+ transaction
                 - Cross-validation folds: 5
                 """)
