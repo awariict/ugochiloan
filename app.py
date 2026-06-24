@@ -479,7 +479,7 @@ def auto_process_loan_applications():
                 db['loan_applications'].update_one(
                     {"_id": app["_id"]},
                     {
-                        "$set": {
+                        "₦set": {
                             "status": decision.lower() if decision != "REVIEW" else "pending",
                             "decision_reason": reason,
                             "risk_score": risk,
@@ -508,7 +508,7 @@ def generate_eda_charts(df):
         fig_scatter = px.scatter(df, x="income", y="defaults", 
                                  color="repayment_history", size="age",
                                  title="Income vs Defaults (colored by Repayment %)",
-                                 labels={"income": "Income ($)", "defaults": "Number of Defaults"})
+                                 labels={"income": "Income (₦)", "defaults": "Number of Defaults"})
         fig_scatter.update_layout(template="plotly_dark")
         charts["scatter_income_defaults"] = fig_scatter
     except:
@@ -527,7 +527,7 @@ def generate_eda_charts(df):
     try:
         fig_dist_income = px.histogram(df, x="income", nbins=30, 
                                        title="Income Distribution",
-                                       labels={"income": "Annual Income ($)"},
+                                       labels={"income": "Annual Income (₦)"},
                                        color_discrete_sequence=["#3498db"])
         fig_dist_income.update_layout(template="plotly_dark")
         charts["dist_income"] = fig_dist_income
@@ -810,7 +810,7 @@ def get_transaction_count(user_id, days=30):
         cutoff_date = datetime.now() - timedelta(days=days)
         count = db['transactions'].count_documents({
             "user_id": user_id,
-            "timestamp": {"$gte": cutoff_date}
+            "timestamp": {"₦gte": cutoff_date}
         })
         return count
     except:
@@ -825,8 +825,8 @@ def deposit_money(user_id, amount):
         result = db['accounts'].update_one(
             {"user_id": ObjectId(user_id)},
             {
-                "$inc": {"balance": amount},
-                "$set": {"updated_at": datetime.now()}
+                "₦inc": {"balance": amount},
+                "₦set": {"updated_at": datetime.now()}
             }
         )
         
@@ -856,8 +856,8 @@ def withdraw_money(user_id, amount):
         result = db['accounts'].update_one(
             {"user_id": ObjectId(user_id)},
             {
-                "$inc": {"balance": -amount},
-                "$set": {"updated_at": datetime.now()}
+                "₦inc": {"balance": -amount},
+                "₦set": {"updated_at": datetime.now()}
             }
         )
         
@@ -895,16 +895,16 @@ def transfer_money(user_id, recipient_username, amount):
         db['accounts'].update_one(
             {"user_id": ObjectId(user_id)},
             {
-                "$inc": {"balance": -amount},
-                "$set": {"updated_at": datetime.now()}
+                "₦inc": {"balance": -amount},
+                "₦set": {"updated_at": datetime.now()}
             }
         )
         
         db['accounts'].update_one(
             {"user_id": recipient["_id"]},
             {
-                "$inc": {"balance": amount},
-                "$set": {"updated_at": datetime.now()}
+                "₦inc": {"balance": amount},
+                "₦set": {"updated_at": datetime.now()}
             }
         )
         
@@ -943,8 +943,8 @@ def recharge_card(user_id, amount, card_number):
         db['accounts'].update_one(
             {"user_id": ObjectId(user_id)},
             {
-                "$inc": {"balance": -amount},
-                "$set": {"updated_at": datetime.now()}
+                "₦inc": {"balance": -amount},
+                "₦set": {"updated_at": datetime.now()}
             }
         )
         
@@ -1018,7 +1018,7 @@ def accept_loan_offer(user_id, amount, duration):
         db['loan_applications'].update_one(
             {"_id": app["_id"]},
             {
-                "$set": {
+                "₦set": {
                     "accepted_amount": amount,
                     "duration": duration,
                     "offer_accepted_at": datetime.now()
@@ -1042,14 +1042,14 @@ def withdraw_loan_money(user_id, amount):
         db['accounts'].update_one(
             {"user_id": ObjectId(user_id)},
             {
-                "$inc": {"balance": amount},
-                "$set": {"updated_at": datetime.now()}
+                "₦inc": {"balance": amount},
+                "₦set": {"updated_at": datetime.now()}
             }
         )
         
         db['loan_applications'].update_one(
             {"_id": app["_id"]},
-            {"$inc": {"borrowed_amount": amount}}
+            {"₦inc": {"borrowed_amount": amount}}
         )
         
         db['transactions'].insert_one({
@@ -1103,7 +1103,7 @@ def get_all_users():
 def approve_user(user_id):
     """Approve pending user"""
     try:
-        db['users'].update_one({"_id": ObjectId(user_id)}, {"$set": {"status": "approved"}})
+        db['users'].update_one({"_id": ObjectId(user_id)}, {"₦set": {"status": "approved"}})
         return True
     except:
         return False
@@ -1151,7 +1151,7 @@ def update_loan_application_status(app_id, status, reason):
     try:
         db['loan_applications'].update_one(
             {"_id": ObjectId(app_id)},
-            {"$set": {"status": status, "decision_reason": reason}}
+            {"₦set": {"status": status, "decision_reason": reason}}
         )
         return True
     except:
@@ -1258,7 +1258,7 @@ if user['role'] == 'customer':
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("💰 Account Balance", f"${balance:,.2f}")
+            st.metric("💰 Account Balance", f"₦{balance:,.2f}")
         with col2:
             st.metric("👤 Username", user['username'])
         with col3:
@@ -1294,11 +1294,11 @@ if user['role'] == 'customer':
         st.title("💵 Deposit Money")
         st.divider()
         
-        amount = st.number_input("Amount to Deposit ($)", min_value=1, step=100)
+        amount = st.number_input("Amount to Deposit (₦)", min_value=1, step=100)
         
         if st.button("✅ Deposit", use_container_width=True, type="primary"):
             if deposit_money(user['_id'], amount):
-                st.success(f"✅ Successfully deposited ${amount:,.2f}")
+                st.success(f"✅ Successfully deposited ₦{amount:,.2f}")
                 st.rerun()
             else:
                 st.error("❌ Deposit failed")
@@ -1308,14 +1308,14 @@ if user['role'] == 'customer':
         st.divider()
         
         balance = get_account_balance(user['_id'])
-        st.info(f"💰 Current Balance: ${balance:,.2f}")
+        st.info(f"💰 Current Balance: ₦{balance:,.2f}")
         
-        amount = st.number_input("Amount to Withdraw ($)", min_value=1, max_value=int(balance) if balance > 0 else 1, step=100)
+        amount = st.number_input("Amount to Withdraw (₦)", min_value=1, max_value=int(balance) if balance > 0 else 1, step=100)
         
         if st.button("✅ Withdraw", use_container_width=True, type="primary"):
             result = withdraw_money(user['_id'], amount)
             if result == "success":
-                st.success(f"✅ Successfully withdrew ${amount:,.2f}")
+                st.success(f"✅ Successfully withdrew ₦{amount:,.2f}")
                 st.rerun()
             elif result == "insufficient":
                 st.error("❌ Insufficient balance")
@@ -1329,13 +1329,13 @@ if user['role'] == 'customer':
         st.divider()
         
         balance = get_account_balance(user['_id'])
-        st.info(f"💰 Current Balance: ${balance:,.2f}")
+        st.info(f"💰 Current Balance: ₦{balance:,.2f}")
         
         col1, col2 = st.columns(2)
         with col1:
             recipient = st.text_input("Recipient Username")
         with col2:
-            amount = st.number_input("Amount ($)", min_value=1, max_value=int(balance) if balance > 0 else 1, step=100)
+            amount = st.number_input("Amount (₦)", min_value=1, max_value=int(balance) if balance > 0 else 1, step=100)
         
         if st.button("✅ Transfer", use_container_width=True, type="primary"):
             if not recipient:
@@ -1343,7 +1343,7 @@ if user['role'] == 'customer':
             else:
                 result = transfer_money(user['_id'], recipient, amount)
                 if result == "success":
-                    st.success(f"✅ Successfully transferred ${amount:,.2f} to {recipient}")
+                    st.success(f"✅ Successfully transferred ₦{amount:,.2f} to {recipient}")
                     st.rerun()
                 elif result == "insufficient":
                     st.error("❌ Insufficient balance")
@@ -1359,13 +1359,13 @@ if user['role'] == 'customer':
         st.divider()
         
         balance = get_account_balance(user['_id'])
-        st.info(f"💰 Current Balance: ${balance:,.2f}")
+        st.info(f"💰 Current Balance: ₦{balance:,.2f}")
         
         col1, col2 = st.columns(2)
         with col1:
             card_number = st.text_input("Card Number (Last 4 digits visible)")
         with col2:
-            amount = st.number_input("Recharge Amount ($)", min_value=1, max_value=int(balance) if balance > 0 else 1, step=100)
+            amount = st.number_input("Recharge Amount (₦)", min_value=1, max_value=int(balance) if balance > 0 else 1, step=100)
         
         if st.button("✅ Recharge", use_container_width=True, type="primary"):
             if len(card_number) < 4:
@@ -1373,7 +1373,7 @@ if user['role'] == 'customer':
             else:
                 result = recharge_card(user['_id'], amount, card_number)
                 if result == "success":
-                    st.success(f"✅ Card recharged successfully with ${amount:,.2f}")
+                    st.success(f"✅ Card recharged successfully with ₦{amount:,.2f}")
                     st.rerun()
                 elif result == "insufficient":
                     st.error("❌ Insufficient balance")
@@ -1390,7 +1390,7 @@ if user['role'] == 'customer':
         st.markdown("### 🤖 Smart Loan Offer Calculation")
         st.info(f"""
         **Your Profile:**
-        - Current Balance: ${balance:,.2f}
+        - Current Balance: ₦{balance:,.2f}
         - Transactions (Last 30 days): {txn_count}
         """)
         
@@ -1399,11 +1399,11 @@ if user['role'] == 'customer':
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("💰 Offered Loan Amount", f"${offered_amount:,.2f}")
+            st.metric("💰 Offered Loan Amount", f"₦{offered_amount:,.2f}")
         with col2:
             st.metric("📈 Max Multiplier", "5x Account Balance")
         with col3:
-            st.metric("📊 Activity Bonus", f"${min(txn_count * 1000, balance * 1.5):,.2f}")
+            st.metric("📊 Activity Bonus", f"₦{min(txn_count * 1000, balance * 1.5):,.2f}")
         
         st.divider()
         st.markdown("### Accept Offer")
@@ -1443,7 +1443,7 @@ if user['role'] == 'customer':
             with col1:
                 st.metric("Status", f"{status_emoji} {loan_status['status'].upper()}")
             with col2:
-                st.metric("Offered Amount", f"${loan_status['offered_amount']:,.2f}")
+                st.metric("Offered Amount", f"₦{loan_status['offered_amount']:,.2f}")
             with col3:
                 st.metric("Duration", f"{loan_status['duration']} months")
             with col4:
@@ -1465,7 +1465,7 @@ if user['role'] == 'customer':
                         st.metric("Eligible In", f"{eligibility['months_to_eligible']} months")
                         st.metric("Eligible Date", eligibility['eligible_date'].strftime("%Y-%m-%d"))
                     with col2:
-                        st.metric("Suggested Loan Amount", f"${eligibility['suggested_loan_amount']:,.2f}")
+                        st.metric("Suggested Loan Amount", f"₦{eligibility['suggested_loan_amount']:,.2f}")
                     
                     st.divider()
                     st.markdown("### 📋 How to Improve Your Application:")
@@ -1482,18 +1482,18 @@ if user['role'] == 'customer':
                 with col1:
                     st.metric("Days Left to Pay", f"{loan_status['days_left']} days")
                 with col2:
-                    st.metric("Daily Payment", f"${schedule['daily']:.2f}")
+                    st.metric("Daily Payment", f"₦{schedule['daily']:.2f}")
                 with col3:
-                    st.metric("Weekly Payment", f"${schedule['weekly']:.2f}")
+                    st.metric("Weekly Payment", f"₦{schedule['weekly']:.2f}")
                 with col4:
-                    st.metric("Monthly Payment", f"${schedule['monthly']:.2f}")
+                    st.metric("Monthly Payment", f"₦{schedule['monthly']:.2f}")
                 
                 st.divider()
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("Quarterly Payment", f"${schedule['quarterly']:.2f}")
+                    st.metric("Quarterly Payment", f"₦{schedule['quarterly']:.2f}")
                 with col2:
-                    st.metric("Total to Pay Back", f"${schedule['total_amount']:,.2f}")
+                    st.metric("Total to Pay Back", f"₦{schedule['total_amount']:,.2f}")
         else:
             st.warning("❌ No loan applications found")
     
@@ -1509,14 +1509,14 @@ if user['role'] == 'customer':
             st.error(f"❌ Loan not approved. Current status: {loan_status['status'].upper()}")
         else:
             available = loan_status['accepted_amount'] - loan_status.get('borrowed_amount', 0)
-            st.info(f"💰 Approved Amount: ${loan_status['accepted_amount']:,.2f}\n\n💵 Already Borrowed: ${loan_status.get('borrowed_amount', 0):,.2f}\n\n✅ Available to Withdraw: ${available:,.2f}")
+            st.info(f"💰 Approved Amount: ₦{loan_status['accepted_amount']:,.2f}\n\n💵 Already Borrowed: ₦{loan_status.get('borrowed_amount', 0):,.2f}\n\n✅ Available to Withdraw: ₦{available:,.2f}")
             
-            amount = st.number_input("Amount to Withdraw ($)", min_value=1, max_value=int(available) if available > 0 else 1, step=100)
+            amount = st.number_input("Amount to Withdraw (₦)", min_value=1, max_value=int(available) if available > 0 else 1, step=100)
             
             if st.button("✅ Withdraw Loan Money", use_container_width=True, type="primary"):
                 result = withdraw_loan_money(user['_id'], amount)
                 if result == "success":
-                    st.success(f"✅ Successfully withdrew ${amount:,.2f} to your account")
+                    st.success(f"✅ Successfully withdrew ₦{amount:,.2f} to your account")
                     st.rerun()
                 elif result == "exceeds_limit":
                     st.error("❌ Amount exceeds approved limit")
@@ -1600,7 +1600,7 @@ else:
         with col5:
             st.metric("⏳ Pending", pending)
         with col6:
-            st.metric("💰 Exposure", f"${total_exposure:,.0f}")
+            st.metric("💰 Exposure", f"₦{total_exposure:,.0f}")
         
         st.divider()
         
@@ -1648,7 +1648,7 @@ else:
             with col1:
                 st.metric("📉 Default Rate", f"{(borrowers['defaults'] > 0).mean():.2%}")
             with col2:
-                st.metric("💰 Avg Income", f"${borrowers['income'].mean():,.0f}")
+                st.metric("💰 Avg Income", f"₦{borrowers['income'].mean():,.0f}")
             with col3:
                 st.metric("👤 Avg Age", f"{borrowers['age'].mean():.0f} years")
             
@@ -1912,7 +1912,7 @@ else:
             fig_amount.update_layout(
                 title='Average Loan Amount Forecast',
                 xaxis_title='Date',
-                yaxis_title='Amount ($)',
+                yaxis_title='Amount (₦)',
                 template='plotly_dark',
                 hovermode='x unified'
             )
@@ -2061,7 +2061,7 @@ else:
             with col1:
                 st.metric("Age", borrower['age'])
             with col2:
-                st.metric("Income", f"${borrower['income']:,.0f}")
+                st.metric("Income", f"₦{borrower['income']:,.0f}")
             with col3:
                 st.metric("Repayment", f"{borrower['repayment_history']:.1f}%")
             with col4:
@@ -2119,7 +2119,7 @@ else:
                         with col1:
                             st.metric("Risk Score", f"{risk:.2f}%")
                         with col2:
-                            st.metric("Loan Amount", f"${amount:,.0f}")
+                            st.metric("Loan Amount", f"₦{amount:,.0f}")
                         with col3:
                             st.metric("Duration", f"{duration} months")
                         with col4:
@@ -2197,9 +2197,9 @@ else:
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Offered Amount", f"${app_data['offered_amount']:,.2f}")
+                    st.metric("Offered Amount", f"₦{app_data['offered_amount']:,.2f}")
                 with col2:
-                    st.metric("Accepted Amount", f"${app_data.get('accepted_amount', 0):,.2f}")
+                    st.metric("Accepted Amount", f"₦{app_data.get('accepted_amount', 0):,.2f}")
                 with col3:
                     st.metric("Current Status", app_data['status'].upper())
                 
@@ -2296,7 +2296,7 @@ else:
                 
                 if len(accounts) > 0:
                     total_balance = sum([acc.get('balance', 0) for acc in accounts])
-                    st.metric("💰 Total System Balance", f"${total_balance:,.2f}")
+                    st.metric("💰 Total System Balance", f"₦{total_balance:,.2f}")
             
             with tab4:
                 st.markdown("### System Configuration")
@@ -2308,8 +2308,8 @@ else:
                 
                 **Loan Calculation:**
                 - Base: 3-5x Account Balance
-                - Activity Bonus: Transaction Frequency × $1000
-                - Minimum: $5,000
+                - Activity Bonus: Transaction Frequency × ₦1000
+                - Minimum: ₦5,000
                 - Maximum: 5x Account Balance
                 
                 **System Requirements:**
@@ -2317,3 +2317,4 @@ else:
                 - Forecasting: Works with 1+ transaction
                 - Cross-validation folds: 5
                 """)
+
