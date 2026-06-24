@@ -38,7 +38,7 @@ st.set_page_config(page_title="Microfinance System", layout="wide")
 # ===== UI WITH BLUE SIDEBAR =====
 
 st.markdown("""<style>
-.stApp { background: linear-gradient(to right, #007BFF, #FFC107, #FF0000); }
+.stApp { background-color: #ADD8E6; }  /* light blue */
 section[data-testid="stSidebar"] { background: linear-gradient(to bottom, #0056b3, #003d82)!important; }
 .sidebar-text { color: white !important; }
 .card { background: white; padding: 12px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); margin-bottom: 8px; }
